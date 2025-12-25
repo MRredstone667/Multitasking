@@ -2,222 +2,182 @@
 <html lang="cs">
 <head>
 <meta charset="UTF-8">
-<title>Multitasking</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fake PiP</title>
+
+<link rel="apple-touch-icon" href="icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="Multitasking">
 
 <style>
-* {
-  box-sizing: border-box;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-}
-
 body {
-  margin: 0;
-  background: #000;
-  color: white;
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #000;
+    color: #fff;
+    text-align: center;
 }
 
-/* TOP MODES */
-#top {
-  display: flex;
-  justify-content: space-around;
-  padding: 10px;
-  background: #111;
+header {
+    padding: 10px;
+    background: #111;
 }
 
-#top button {
-  background: none;
-  border: none;
-  color: #888;
-  font-size: 16px;
+input {
+    margin: 6px;
 }
 
-#top button.active {
-  color: #00aaff;
-}
-
-/* SCREEN */
-#screen {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
+#player {
+    position: relative;
+    width: 100%;
+    max-width: 360px;
+    margin: 20px auto;
+    aspect-ratio: 9 / 16;
+    background: #000;
+    overflow: hidden;
 }
 
 video {
-  width: 90%;
-  max-width: 360px;
-  background: black;
+    position: relative;
+    z-index: 1; /* keep video behind overlays */
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
 }
 
-#nosignal {
-  position: absolute;
-  font-size: 22px;
-  color: #666;
+
+/* small responsive tweaks */
+@media (min-width: 700px) {
+    #player { max-width: 420px; }
 }
 
-/* STATUS */
-#status {
-  text-align: center;
-  padding: 6px;
-  font-size: 14px;
-  color: #aaa;
+/* simple preview (diagnostic) */
+#preview { margin-top: 10px; }
+#previewImg { max-width: 120px; max-height: 120px; object-fit: cover; border-radius: 6px; border: 1px solid #333; display: none; }
+
+
+
+footer {
+    position: fixed;
+    bottom: 0;
+    width: 100%;
+    background: #111;
+    padding: 10px 10px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
-/* CONTROLS */
-#controls {
-  display: flex;
-  justify-content: space-around;
-  padding: 10px;
+button {
+    padding: 12px 20px;
+    font-size: 16px;
+    margin: 5px;
+    border: none;
+    border-radius: 8px;
 }
 
-.start {
-  background: green;
-  border: none;
-  color: white;
-  padding: 10px 20px;
-  border-radius: 8px;
+#start {
+    background: #00c853;
+    color: #000;
 }
 
-.stop {
-  background: darkred;
-  border: none;
-  color: white;
-  padding: 10px 20px;
-  border-radius: 8px;
-}
-
-.hidden {
-  display: none;
-}
-
-input, textarea {
-  width: 90%;
-  background: #111;
-  color: white;
-  border: 1px solid #333;
-  padding: 8px;
-  margin-top: 10px;
+#stop {
+    background: #d50000;
+    color: #fff;
 }
 </style>
 </head>
 
 <body>
 
-<!-- MODE SWITCH -->
-<div id="top">
-  <button onclick="setMode('media')" class="active">Video / Foto</button>
-  <button onclick="setMode('yt')">YT Video</button>
-  <button onclick="setMode('notes')">Poznámky</button>
+<header>
+    <input type="file" id="imageInput" accept="image/*">
+</header>
+
+<div id="player">
+    <video id="video" playsinline webkit-playsinline muted loop controls preload="metadata">
+        <source src="loop.mp4" type="video/mp4">
+    </video>
+
 </div>
 
-<!-- SCREEN -->
-<div id="screen">
-  <video id="video" playsinline autoplay></video>
-  <div id="nosignal">No signal :(</div>
-</div>
+<!-- status shown next to file input during conversion -->
+<header style="padding-top:0;">
+    <span id="convertStatus" style="margin-left:8px;font-size:14px;color:#ddd"></span>
+</header>
 
-<!-- INPUTS -->
-<div id="inputs" style="text-align:center;">
-  <input type="file" id="fileInput" accept="video/*,image/*">
-  <input type="text" id="ytInput" class="hidden" placeholder="YouTube URL">
-  <textarea id="notesInput" class="hidden" placeholder="Napiš poznámku..."></textarea>
-</div>
 
-<!-- STATUS -->
-<div id="status">ready</div>
-
-<!-- CONTROLS -->
-<div id="controls">
-  <button class="start" onclick="start()">START</button>
-  <button class="stop" onclick="stop()">STOP</button>
-</div>
-
-<canvas id="canvas" hidden></canvas>
 
 <script>
-let mode = 'media';
-let stream;
-const video = document.getElementById("video");
-const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
-const nosignal = document.getElementById("nosignal");
-const status = document.getElementById("status");
+const video = document.getElementById('video');
+const imageInput = document.getElementById('imageInput');
+const convertStatus = document.getElementById('convertStatus');
 
-function setMode(m) {
-  mode = m;
-  document.querySelectorAll("#top button").forEach(b => b.classList.remove("active"));
-  event.target.classList.add("active");
+// current object URL so we can revoke it when replaced
+let posterURL = null;
 
-  document.getElementById("fileInput").classList.toggle("hidden", m !== 'media');
-  document.getElementById("ytInput").classList.toggle("hidden", m !== 'yt');
-  document.getElementById("notesInput").classList.toggle("hidden", m !== 'notes');
-}
+imageInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-function start() {
-  nosignal.style.display = "none";
+    convertStatus.textContent = 'Converting...';
+    imageInput.disabled = true;
 
-  if (mode === 'media') {
-    const file = fileInput.files[0];
-    if (!file) return status.textContent = "select media";
+    // revoke any previous poster URL
+    if (posterURL) { URL.revokeObjectURL(posterURL); posterURL = null; }
 
-    if (file.type.startsWith("video")) {
-      video.src = URL.createObjectURL(file);
-      video.loop = true;
-      video.play();
-      status.textContent = "video playing";
-    } else {
-      const img = new Image();
-      img.src = URL.createObjectURL(file);
-      img.onload = () => fakeStream(() => {
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      });
-    }
-  }
+    const reader = new FileReader();
+    reader.onload = async () => {
+        const dataURL = reader.result; // base64 data
 
-  if (mode === 'notes') {
-    const text = notesInput.value || " ";
-    fakeStream(() => {
-      ctx.fillStyle = "black";
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-      ctx.fillStyle = "white";
-      ctx.font = "20px sans-serif";
-      ctx.fillText(text, 10, 50);
-    });
-  }
+        try {
+            // POST image to server as JSON { filename, data }
+            const resp = await fetch('/api/convert', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: file.name, data: dataURL })
+            });
 
-  status.textContent = "stream running";
-}
+            if (!resp.ok) {
+                const err = await resp.text();
+                throw new Error(err || 'Server conversion failed');
+            }
 
-function fakeStream(draw) {
-  canvas.width = 360;
-  canvas.height = 640;
+            const json = await resp.json();
+            // json.url should point to the generated MP4 (relative path)
+            if (json && json.url) {
+                // set video source to converted MP4
+                video.src = json.url;
+                try { video.load(); } catch (e) { }
+                await video.play();
+                convertStatus.textContent = '';
+            } else {
+                throw new Error('Invalid server response');
+            }
+        } catch (err) {
+            alert('Conversion failed: ' + (err.message || err));
+            convertStatus.textContent = '';
+        } finally {
+            imageInput.disabled = false;
+            imageInput.value = '';
+        }
+    };
 
-  stream = canvas.captureStream(30);
-  video.srcObject = stream;
+    reader.onerror = () => {
+        alert('Failed to read file');
+        convertStatus.textContent = '';
+        imageInput.disabled = false;
+    };
 
-  function loop() {
-    draw();
-    requestAnimationFrame(loop);
-  }
-  loop();
-}
+    reader.readAsDataURL(file);
+});
 
-function stop() {
-  if (stream) stream.getTracks().forEach(t => t.stop());
-  video.src = "";
-  video.srcObject = null;
-  nosignal.style.display = "block";
-  status.textContent = "stopped";
-}
+// cleanup on unload
+window.addEventListener('beforeunload', () => {
+    if (posterURL) { URL.revokeObjectURL(posterURL); posterURL = null; }
+});
 </script>
 
 </body>

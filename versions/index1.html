@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+
+<title>Fake PiP Player</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  background: #0d1117;
+  color: white;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+header {
+  display: flex;
+  justify-content: space-around;
+  background: #161b22;
+  padding: 10px 0;
+}
+
+header button {
+  background: none;
+  border: none;
+  color: #8b949e;
+  font-size: 16px;
+}
+
+header button.active {
+  color: #58a6ff;
+  font-weight: bold;
+}
+
+#player {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: black;
+  position: relative;
+}
+
+#status {
+  position: absolute;
+  color: #8b949e;
+  font-size: 18px;
+}
+
+video {
+  max-width: 100%;
+  max-height: 100%;
+  display: none;
+}
+
+#controls {
+  background: #161b22;
+  padding: 10px;
+  text-align: center;
+}
+
+#controls input {
+  margin-bottom: 8px;
+}
+
+#buttons {
+  display: flex;
+  justify-content: space-around;
+}
+
+#start {
+  background: #238636;
+}
+
+#stop {
+  background: #da3633;
+}
+
+#buttons button {
+  border: none;
+  color: white;
+  padding: 10px 30px;
+  border-radius: 8px;
+  font-size: 16px;
+}
+</style>
+</head>
+
+<body>
+
+<header>
+  <button class="active" onclick="setMode('media')">Video / Foto</button>
+  <button onclick="setMode('yt')">YT Video</button>
+  <button onclick="setMode('notes')">Poznámky</button>
+</header>
+
+<div id="player">
+  <div id="status">No signal :(</div>
+
+  <video id="video"
+    controls
+    loop
+    muted
+    playsinline
+  ></video>
+</div>
+
+<div id="controls">
+  <input type="file" id="fileInput" accept="video/*">
+</div>
+
+<div id="buttons">
+  <button id="start" onclick="start()">START</button>
+  <button id="stop" onclick="stop()">STOP</button>
+</div>
+
+<script>
+let currentMode = "media";
+const video = document.getElementById("video");
+const statusText = document.getElementById("status");
+const fileInput = document.getElementById("fileInput");
+
+fileInput.addEventListener("change", e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const url = URL.createObjectURL(file);
+  video.src = url;
+  statusText.innerText = "Ready";
+});
+
+function setMode(mode) {
+  currentMode = mode;
+
+  document.querySelectorAll("header button").forEach(b => b.classList.remove("active"));
+  event.target.classList.add("active");
+
+  stop();
+
+  if (mode === "media") {
+    fileInput.style.display = "block";
+    statusText.innerText = "No signal :(";
+  } else {
+    fileInput.style.display = "none";
+    statusText.innerText = "Coming soon";
+  }
+}
+
+function start() {
+  if (!video.src) return;
+
+  statusText.style.display = "none";
+  video.style.display = "block";
+  video.play();
+}
+
+function stop() {
+  video.pause();
+  video.currentTime = 0;
+  video.style.display = "none";
+  statusText.style.display = "block";
+  statusText.innerText = "Stopped";
+}
+</script>
+
+</body>
+</html>
