@@ -7,8 +7,11 @@
 <title>Fake PiP</title>
 
 <link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-title" content="Fake PiP">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="icon.png">
 
 <style>
 body {
@@ -92,92 +95,334 @@ button {
 
 <body>
 
-<header>
-    <input type="file" id="imageInput" accept="image/*">
-</header>
-
-<div id="player">
-    <video id="video" playsinline webkit-playsinline muted loop controls preload="metadata">
-        <source src="loop.mp4" type="video/mp4">
-    </video>
-
+<div style="padding:12px; background:#111; text-align:center;">
+    <label for="fileInput" style="background:#007bff;color:#fff;padding:10px 18px;border-radius:8px;cursor:pointer;font-weight:600;">Choose files</label>
+    <input id="fileInput" type="file" accept="image/*,video/mp4,audio/mp3" multiple style="display:none">
+    <span id="error" style="color:#ff8a80;margin-left:12px"></span>
 </div>
 
-<!-- status shown next to file input during conversion -->
-<header style="padding-top:0;">
-    <span id="convertStatus" style="margin-left:8px;font-size:14px;color:#ddd"></span>
-</header>
+<div id="controls" style="padding:12px;display:none;background:#111;">
+    <div id="videoControls" style="display:none;">
+        <button id="generateVideo">Generate (show video)</button>
+    </div>
+
+
+
+    <div id="imageControls" style="display:none;">
+        <div style="margin-top:8px;color:#fff;">
+            <label for="durationRange">Duration per image: <span id="durationVal">3</span>s</label>
+            <input id="durationRange" type="range" min="1" max="10" step="0.5" value="3" style="width:200px;margin-left:8px">
+        </div>
+        <!-- Fade controls removed from UI; keep hidden inputs to preserve values -->
+        <input id="fadeInRange" type="hidden" value="0">
+        <input id="fadeOutRange" type="hidden" value="0">
+        <div style="margin-top:10px;">
+            <button id="generateImages">Generate Video from Images</button>
+            <progress id="progress" value="0" max="100" style="display:none;width:100%;margin-top:8px"></progress>
+        </div>
+    </div>
+</div>
+
+<canvas id="canvas" style="display:none"></canvas>
+<video controls id="videoPlayer" style="display:none;width:100%;max-width:360px;margin:12px auto;display:block"></video>
+
+<div id="playbackOptions" style="display:none;text-align:center;margin-top:8px;">
+    <label style="color:#fff"><input type="checkbox" id="loopChk"> Loop video</label>
+    &nbsp;&nbsp;
+    <label style="color:#fff"><input type="checkbox" id="mutedChk"> Muted</label>
+</div>
+
+<span id="convertStatus" style="display:block;text-align:center;margin-top:8px;color:#ddd"></span>
 
 
 
 <script>
-const video = document.getElementById('video');
-const imageInput = document.getElementById('imageInput');
+const fileInput = document.getElementById('fileInput');
+const errorEl = document.getElementById('error');
+const controls = document.getElementById('controls');
+const videoControls = document.getElementById('videoControls');
+const imageControls = document.getElementById('imageControls');
+const generateVideo = document.getElementById('generateVideo');
+const generateImages = document.getElementById('generateImages');
+const loopChk = document.getElementById('loopChk');
+const mutedChk = document.getElementById('mutedChk');
+const durationRange = document.getElementById('durationRange');
+const durationVal = document.getElementById('durationVal');
+const fadeInRange = document.getElementById('fadeInRange');
+const fadeOutRange = document.getElementById('fadeOutRange');
+const fadeInVal = document.getElementById('fadeInVal');
+const fadeOutVal = document.getElementById('fadeOutVal');
+const progress = document.getElementById('progress');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const videoPlayer = document.getElementById('videoPlayer');
+const playbackOptions = document.getElementById('playbackOptions');
 const convertStatus = document.getElementById('convertStatus');
 
-// current object URL so we can revoke it when replaced
+// wire playback controls to active video
+loopChk.onchange = () => { videoPlayer.loop = loopChk.checked; };
+mutedChk.onchange = () => { videoPlayer.muted = mutedChk.checked; };
+
+function showPlaybackOptions() {
+    if (!playbackOptions) return;
+    playbackOptions.style.display = 'block';
+    loopChk.checked = !!videoPlayer.loop;
+    mutedChk.checked = !!videoPlayer.muted;
+}
+
 let posterURL = null;
 
-imageInput.addEventListener('change', (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+function resetUI() {
+    controls.style.display = 'none';
+    videoControls.style.display = 'none';
+    imageControls.style.display = 'none';
+    videoPlayer.style.display = 'none';
+    document.getElementById('playbackOptions').style.display = 'none';
+    document.getElementById('loopChk').checked = false;
+    document.getElementById('mutedChk').checked = false;
+    errorEl.textContent = '';
+    progress.style.display = 'none';
+    progress.value = 0;
+    convertStatus.textContent = '';
+}
+resetUI();
 
-    convertStatus.textContent = 'Converting...';
-    imageInput.disabled = true;
+fileInput.addEventListener('change', () => {
+    resetUI();
+    const files = Array.from(fileInput.files || []);
+    if (files.length === 0) return;
 
-    // revoke any previous poster URL
-    if (posterURL) { URL.revokeObjectURL(posterURL); posterURL = null; }
+    // Determine types
+    const imageFiles = files.filter(f => f.type.startsWith('image/'));
+    const videoFiles = files.filter(f => f.type.startsWith('video/') || f.name.toLowerCase().endsWith('.mp4'));
+    const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.toLowerCase().endsWith('.mp3'));
+    const mediaFiles = videoFiles.concat(audioFiles);
 
-    const reader = new FileReader();
-    reader.onload = async () => {
-        const dataURL = reader.result; // base64 data
+    // Validation
+    if (mediaFiles.length > 1) { errorEl.textContent = 'Select only one video/audio file (or multiple images)'; return; }
+    if (mediaFiles.length === 1 && imageFiles.length > 0) { errorEl.textContent = 'Cannot mix video/audio and images'; return; }
+    if (imageFiles.length === 0 && mediaFiles.length === 0) { errorEl.textContent = 'Please select images or a single video/audio file'; return; }
 
-        try {
-            // POST image to server as JSON { filename, data }
-            const resp = await fetch('/api/convert', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filename: file.name, data: dataURL })
-            });
+    controls.style.display = 'block';
 
-            if (!resp.ok) {
-                const err = await resp.text();
-                throw new Error(err || 'Server conversion failed');
+    if (mediaFiles.length === 1) {
+        // Video/audio selected
+        videoControls.style.display = 'block';
+        imageControls.style.display = 'none';
+
+        const file = mediaFiles[0];
+        const url = URL.createObjectURL(file);
+        videoPlayer.src = url;
+        videoPlayer.style.display = 'block';
+        videoPlayer.muted = false;
+
+        // show playback options for uploaded video
+        showPlaybackOptions();
+
+        generateVideo.onclick = () => {
+            generateVideo.style.display = 'none';
+            videoPlayer.play().catch(()=>{});
+        };
+
+    } else {
+        // Images selected
+        imageControls.style.display = 'block';
+        videoControls.style.display = 'none';
+
+        durationVal.textContent = durationRange.value;
+        if (fadeInVal) fadeInVal.textContent = (fadeInRange ? fadeInRange.value : '0');
+        if (fadeOutVal) fadeOutVal.textContent = (fadeOutRange ? fadeOutRange.value : '0');
+
+        durationRange.oninput = () => durationVal.textContent = durationRange.value;
+        if (fadeInRange && fadeInVal) fadeInRange.oninput = () => fadeInVal.textContent = fadeInRange.value;
+        if (fadeOutRange && fadeOutVal) fadeOutRange.oninput = () => fadeOutVal.textContent = fadeOutRange.value;
+
+        generateImages.onclick = async () => {
+            const dur = parseFloat(durationRange.value);
+            const fin = (fadeInRange && fadeInRange.value) ? parseFloat(fadeInRange.value) : 0;
+            const fout = (fadeOutRange && fadeOutRange.value) ? parseFloat(fadeOutRange.value) : 0;
+            if (fin + fout >= dur) { alert('Fade durations must sum to less than per-image duration'); return; }
+
+            progress.style.display = 'block';
+            progress.value = 0;
+            convertStatus.textContent = 'Generating...';
+
+            const imageObjs = [];
+            for (const f of files) {
+                if (!f.type.startsWith('image/')) continue;
+                const img = await loadImageFromFile(f);
+                imageObjs.push(img);
             }
 
-            const json = await resp.json();
-            // json.url should point to the generated MP4 (relative path)
-            if (json && json.url) {
-                // set video source to converted MP4
-                video.src = json.url;
-                try { video.load(); } catch (e) { }
-                await video.play();
+            const w = imageObjs[0].naturalWidth;
+            const h = imageObjs[0].naturalHeight;
+            canvas.width = w;
+            canvas.height = h;
+
+            try {
+                if (!window.MediaRecorder) throw new Error('MediaRecorder not supported in this browser');
+                // try webm generation
+                const blobUrl = await renderImagesToWebM(imageObjs, { perImage: dur, fadeIn: fin, fadeOut: fout, fps: 30 });
+
+                // check playback support (broad webm support)
+                const vtest = document.createElement('video');
+                const canPlayWebM = vtest.canPlayType && (vtest.canPlayType('video/webm; codecs="vp9"') || vtest.canPlayType('video/webm; codecs="vp8"') || vtest.canPlayType('video/webm'));
+
+                if (canPlayWebM) {
+                    videoPlayer.src = blobUrl;
+                    videoPlayer.loop = loopChk.checked;
+                    videoPlayer.muted = mutedChk.checked;
+                    videoPlayer.style.display = 'block';
+                    // show playback options once a video is ready
+                    showPlaybackOptions();
+                    controls.style.display = 'none';
+                    convertStatus.textContent = '';
+                } else {
+                    // Browser likely cannot play WebM (e.g., Safari/iPhone). Offer instructions.
+                    convertStatus.textContent = 'Video generated (WebM). Your browser may not play it; download externally or open in Firefox/Chrome.';
+                    // still keep the blob available via URL (user can right-click the video and Save As on supporting browsers)
+                }
+            } catch (err) {
+                console.error('render error', err);
+                const msg = (err && err.message) ? err.message : String(err);
+                // if MediaRecorder not supported or constructor failed, offer server-side fallback
+                if (msg.includes('MediaRecorder') || msg.includes('No supported MediaRecorder')) {
+                    const ok = confirm(msg + '\nYour browser may not support client-side WebM encoding. Upload images to server for MP4 conversion?');
+                    if (ok) {
+                        alert('Server-side upload is disabled in standalone mode. Please open this page in a desktop browser with WebM support (Firefox/Chrome) or use a separate conversion tool.');
+                        convertStatus.textContent = '';
+                        return;
+                    }
+                }
+                alert('Error creating video: ' + msg);
                 convertStatus.textContent = '';
-            } else {
-                throw new Error('Invalid server response');
+            } finally {
+                progress.style.display = 'none';
+                progress.value = 0;
             }
-        } catch (err) {
-            alert('Conversion failed: ' + (err.message || err));
-            convertStatus.textContent = '';
-        } finally {
-            imageInput.disabled = false;
-            imageInput.value = '';
+        };
+    }
+});
+
+function loadImageFromFile(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to load image')); };
+        img.src = url;
+    });
+}
+
+async function renderImagesToWebM(images, opts) {
+    if (!window.MediaRecorder) throw new Error('MediaRecorder not supported in this browser');
+    const fps = (opts && typeof opts.fps === 'number') ? opts.fps : 30;
+    const perImage = (opts && typeof opts.perImage === 'number') ? opts.perImage : 3;
+    const fadeIn = (opts && typeof opts.fadeIn === 'number') ? opts.fadeIn : 0;
+    const fadeOut = (opts && typeof opts.fadeOut === 'number') ? opts.fadeOut : 0;
+
+    const stream = canvas.captureStream(fps);
+
+    function chooseSupportedMime() {
+        const candidates = [
+            'video/webm;codecs=vp9',
+            'video/webm;codecs=vp8',
+            'video/webm'
+        ];
+        if (typeof MediaRecorder.isTypeSupported === 'function') {
+            for (const c of candidates) {
+                if (MediaRecorder.isTypeSupported(c)) return c;
+            }
+            return null;
         }
-    };
+        // if not available, optimistically try basic webm
+        return 'video/webm';
+    }
 
-    reader.onerror = () => {
-        alert('Failed to read file');
-        convertStatus.textContent = '';
-        imageInput.disabled = false;
-    };
+    const mime = chooseSupportedMime();
+    if (!mime) throw new Error('No supported MediaRecorder MIME (WebM) found in this browser. Consider using server-side conversion to MP4 for iOS.');
 
-    reader.readAsDataURL(file);
-});
+    let recorder;
+    try {
+        recorder = new MediaRecorder(stream, { mimeType: mime });
+    } catch (err) {
+        throw new Error('MediaRecorder constructor failed for ' + mime + ': ' + (err && err.message ? err.message : err));
+    }
 
-// cleanup on unload
-window.addEventListener('beforeunload', () => {
-    if (posterURL) { URL.revokeObjectURL(posterURL); posterURL = null; }
-});
+    const chunks = [];
+    recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+
+    const totalFramesPerImage = Math.round(perImage * fps);
+    const fadeInFrames = Math.round(fadeIn * fps);
+    const fadeOutFrames = Math.round(fadeOut * fps);
+
+    let totalFrames = images.length * totalFramesPerImage;
+    let framesRendered = 0;
+
+    console.debug('renderImagesToWebM: images=', images.length, 'fps=', fps, 'perImage=', perImage, 'totalFramesPerImage=', totalFramesPerImage, 'totalFrames=', totalFrames, 'expectedSec=', (totalFrames / fps).toFixed(3));
+
+    recorder.start();
+
+    for (let i = 0; i < images.length; i++) {
+        const img = images[i];
+        const frameDuration = 1000 / fps;
+        const frameStart = performance.now();
+        for (let f = 0; f < totalFramesPerImage; f++) {
+            const target = frameStart + f * frameDuration;
+            const now = performance.now();
+            if (target > now) await sleep(target - now);
+
+            let alpha = 1;
+            if (fadeInFrames > 0 && f < fadeInFrames) {
+                alpha = f / fadeInFrames;
+            } else if (fadeOutFrames > 0 && f >= totalFramesPerImage - fadeOutFrames) {
+                const pos = f - (totalFramesPerImage - fadeOutFrames);
+                alpha = (fadeOutFrames - pos) / fadeOutFrames;
+            } else {
+                alpha = 1;
+            }
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+            // draw image centered and cover
+            drawCover(img, ctx, canvas.width, canvas.height);
+
+            framesRendered++;
+            progress.value = Math.round((framesRendered / totalFrames) * 100);
+        }
+    }
+
+    // stop and collect blob
+    recorder.stop();
+
+    await new Promise(resolve => recorder.onstop = resolve);
+
+    const blobType = (chunks[0] && chunks[0].type) ? chunks[0].type.split(';')[0] : mime.split(';')[0];
+    const blob = new Blob(chunks, { type: blobType });
+    const url = URL.createObjectURL(blob);
+    return url;
+}
+
+function drawCover(img, ctx, w, h) {
+    const iw = img.naturalWidth, ih = img.naturalHeight;
+    const ir = iw / ih;
+    const cr = w / h;
+    let dw, dh, dx, dy;
+    if (ir > cr) {
+        dh = h; dw = dh * ir; dx = (w - dw) / 2; dy = 0;
+    } else {
+        dw = w; dh = dw / ir; dx = 0; dy = (h - dh) / 2;
+    }
+    ctx.drawImage(img, dx, dy, dw, dh);
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+// Server-side upload disabled in standalone HTML mode
+async function uploadImagesAsZip(files, opts = {}) {
+    throw new Error('Server-side conversion is disabled in standalone HTML mode.');
+}
+
 </script>
 
 </body>
